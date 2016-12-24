@@ -29,6 +29,7 @@ int main(int argc, char** argv) {
     char buf[MAX_BUF_SIZE];
     int ret = 0;
     int port = 8080;
+    pid_t child_pid;
 
     if(argv[1] == NULL) {
         usage(argv[0]);
@@ -83,6 +84,18 @@ int main(int argc, char** argv) {
             perror("accept()");
             exit(-1);
         }
+        //Here we should fork a process to handle the connection
+        child_pid = fork();
+        if(child_pid < 0) {
+            perror("fork()");
+            exit(-1);
+        }
+        //parent process, continue accept connections
+        if(child_pid != 0) {
+            close(clifd);
+            continue;
+        }
+
         printf("Connect fd = %d\n", clifd);
         memset(buf, 0, sizeof(buf));
 
@@ -92,7 +105,7 @@ int main(int argc, char** argv) {
                 perror("read()");
                 exit(-1);
             }
-            printf("Get data %s\n", buf);
+            //printf("Get data %s\n", buf);
 
             //write back to the client
             ret = write(clifd, buf, strlen(buf) * sizeof(char));
@@ -101,7 +114,11 @@ int main(int argc, char** argv) {
                 exit(-1);
             }
         }
-        close(clifd);
+        ret = close(clifd);
+        if(ret) {
+            perror("close()");
+        }
+        exit(0);
     }
     return 0;
 }
