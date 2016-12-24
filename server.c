@@ -16,6 +16,11 @@
 
 #define MAX_BUF_SIZE 1000
 
+void usage(char *proc_name) {
+    printf("%s [port]\n", proc_name);
+    exit(1);
+}
+
 int main(int argc, char** argv) {
     int sockfd, clifd;
 
@@ -23,6 +28,13 @@ int main(int argc, char** argv) {
     struct sockaddr_in server_in_addr;
     char buf[MAX_BUF_SIZE];
     int ret = 0;
+    int port = 8080;
+
+    if(argv[1] == NULL) {
+        usage(argv[0]);
+    }
+    port = atoi(argv[1]);
+
 
     //create the socket flide
     //AF_INET is the address family for internet, SOCK_STREAM means TCP connections
@@ -45,7 +57,7 @@ int main(int argc, char** argv) {
     //code: server_in_addr.sin_addr.s_addr =  htonl(INADDR_ANY);
 
     //Convert unsigned short to on-wire data
-    server_in_addr.sin_port = htons(8080);
+    server_in_addr.sin_port = htons(port);
     if(ret < 0) {
         perror("inet_aton()");
         exit(-1);
