@@ -29,7 +29,8 @@ void usage(char *proc_name) {
 // Handle connections per thread
 void *handle_conn(void *args) {
     ThreadArgs *targs = args;
-    printf("fd = %d\n", targs->clifd);
+    //printf("fd = %d\n", targs->clifd);
+    //printf("args = %x\n", args);
     int ret = 0;
     char buf[MAX_BUF_SIZE];
     memset(buf, 0, sizeof(buf));
@@ -43,6 +44,7 @@ void *handle_conn(void *args) {
         memset(buf, 0, sizeof(buf));
     }
     close(targs->clifd);
+    free(args);
     return NULL;
 }
 
@@ -53,7 +55,7 @@ int main(int argc, char** argv) {
     struct sockaddr_in server_in_addr;
     int ret = 0;
     int port = 8080;
-    ThreadArgs targs;
+    ThreadArgs *targs = NULL;
     pid_t child_pid;
 
     if(argv[1] == NULL) {
@@ -113,13 +115,14 @@ int main(int argc, char** argv) {
             perror("accept()");
             exit(-1);
         }
-        targs.clifd = clifd;
         printf("Create thread with fd = %d\n", clifd);
         pthread_attr_t attr;
         pthread_attr_init(&attr);
         thread_cnt++;
+        targs = (ThreadArgs *)malloc(sizeof(ThreadArgs));
+        targs->clifd = clifd;
         thread_list = (pthread_t *)realloc((void *)thread_list, thread_cnt * sizeof(pthread_t));
-        ret = pthread_create(&thread_list[thread_cnt - 1], &attr, handle_conn, (void *)&targs);
+        ret = pthread_create(&thread_list[thread_cnt - 1], &attr, handle_conn, (void *)targs);
         if(ret < 0) {
             perror("pthread_create()");
             exit(-1);
