@@ -1,14 +1,14 @@
 /*************************************************************************
   > File Name: server.c
   > Author: VOID_133
-  > A very simple tcp echo server illustrate use of socket
-  > Ver1 only accept single connection, no multiple connection allowed
+  > A very simple tcp echo server illustrate use of socket > Ver1 only accept single connection, no multiple connection allowed
   > Mail: ################### 
   > Created Time: Wed 21 Dec 2016 04:03:25 PM HKT
  ************************************************************************/
 #include<stdio.h>
 #include<stdlib.h>
 #include<unistd.h>
+#include<pthread.h>
 #include<arpa/inet.h>
 #include<sys/socket.h>
 #include<string.h>
@@ -16,9 +16,34 @@
 
 #define MAX_BUF_SIZE 1000
 
+typedef struct thread_args {
+    int clifd;
+} ThreadArgs;
+
+
 void usage(char *proc_name) {
     printf("%s [port]\n", proc_name);
     exit(1);
+}
+
+// Handle connections per thread
+void *handle_conn(void *args) {
+    ThreadArgs *targs = args;
+    printf("fd = %d\n", targs->clifd);
+    int ret = 0;
+    char buf[MAX_BUF_SIZE];
+    memset(buf, 0, sizeof(buf));
+    while(ret = read(targs->clifd, buf,  (size_t)MAX_BUF_SIZE) && ret != EOF) {
+        //printf("Client message: %s\n", buf);
+        ret = write(targs->clifd, buf, sizeof(char) * (strlen(buf) + 1));
+        if(ret < 0) {
+            perror("write()");
+            break;
+        }
+        memset(buf, 0, sizeof(buf));
+    }
+    close(targs->clifd);
+    return NULL;
 }
 
 int main(int argc, char** argv) {
@@ -26,9 +51,9 @@ int main(int argc, char** argv) {
 
     //sockaddr_in is used to describe internet(IPV4) socket address
     struct sockaddr_in server_in_addr;
-    char buf[MAX_BUF_SIZE];
     int ret = 0;
     int port = 8080;
+    ThreadArgs targs;
     pid_t child_pid;
 
     if(argv[1] == NULL) {
@@ -77,48 +102,28 @@ int main(int argc, char** argv) {
         perror("listen()");
         exit(-1);
     }
+    // Initialize thread_list variable
+    int thread_cnt = 0;
+    pthread_t *thread_list = NULL;
     while(1) {
         //accept will block until a client connect to the server
+        //Use pthread_create to create thread for handling connections
         clifd = accept(sockfd, NULL, NULL);
-        if(clifd < 0) {
+        if (clifd < 0) {
             perror("accept()");
             exit(-1);
         }
-        //Here we should fork a process to handle the connection
-        child_pid = fork();
-        if(child_pid < 0) {
-            perror("fork()");
+        targs.clifd = clifd;
+        printf("Create thread with fd = %d\n", clifd);
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        thread_cnt++;
+        thread_list = (pthread_t *)realloc((void *)thread_list, thread_cnt * sizeof(pthread_t));
+        ret = pthread_create(&thread_list[thread_cnt - 1], &attr, handle_conn, (void *)&targs);
+        if(ret < 0) {
+            perror("pthread_create()");
             exit(-1);
         }
-        //parent process, continue accept connections
-        if(child_pid != 0) {
-            close(clifd);
-            continue;
-        }
-
-        printf("Connect fd = %d\n", clifd);
-        memset(buf, 0, sizeof(buf));
-
-        //read from the client until client close/or send EOF
-        while((ret = read(clifd, buf, (size_t)MAX_BUF_SIZE)) && ret != EOF) {
-            if(ret < 0) {
-                perror("read()");
-                exit(-1);
-            }
-            //printf("Get data %s\n", buf);
-
-            //write back to the client
-            ret = write(clifd, buf, strlen(buf) * sizeof(char));
-            if(ret < 0) {
-                perror("write()");
-                exit(-1);
-            }
-        }
-        ret = close(clifd);
-        if(ret) {
-            perror("close()");
-        }
-        exit(0);
     }
     return 0;
 }
