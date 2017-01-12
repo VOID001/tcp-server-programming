@@ -1,13 +1,14 @@
 /*************************************************************************
   > File Name: server.c
   > Author: VOID_133
-  > A very simple tcp echo server illustrate use of socket > Ver1 only accept single connection, no multiple connection allowed
   > Mail: ################### 
   > Created Time: Wed 21 Dec 2016 04:03:25 PM HKT
  ************************************************************************/
+#define _GNU_SOURCE
 #include<stdio.h>
 #include<stdlib.h>
 #include<unistd.h>
+#include<fcntl.h>
 #include<pthread.h>
 #include<arpa/inet.h>
 #include<sys/socket.h>
@@ -26,24 +27,46 @@ void usage(char *proc_name) {
     exit(1);
 }
 
+int nocopy_echo(int connfd, int pipe_rd, int pipe_wr) {
+    ssize_t sz;
+    sz = splice(connfd, NULL, pipe_wr, NULL, MAX_BUF_SIZE, SPLICE_F_MORE);
+    if(sz < 0) {
+        perror("splice() read in");
+        return sz;
+    }
+    sz = splice(pipe_rd, NULL, connfd, NULL, MAX_BUF_SIZE, SPLICE_F_MORE);
+    if(sz < 0) {
+        perror("splice() write out");
+        return sz;
+    }
+    return 0;
+}
+
 // Handle connections per thread
 void *handle_conn(void *args) {
-    ThreadArgs *targs = args;
+    // Here we use an advanced no-copy IO to echo back the data
+    ThreadArgs *targs = (ThreadArgs *)args;
     //printf("fd = %d\n", targs->clifd);
     //printf("args = %x\n", args);
     int ret = 0;
-    char buf[MAX_BUF_SIZE];
-    memset(buf, 0, sizeof(buf));
-    while(ret = read(targs->clifd, buf,  (size_t)MAX_BUF_SIZE) && ret != EOF) {
-        //printf("Client message: %s\n", buf);
-        ret = write(targs->clifd, buf, sizeof(char) * (strlen(buf) + 1));
+    int pipefd[2];
+    ret = pipe(pipefd);
+    if(ret < 0) {
+        perror("pipe()");
+        return NULL;
+    }
+    while(1) {
+        ret = nocopy_echo(targs->clifd, pipefd[0], pipefd[1]);
         if(ret < 0) {
-            perror("write()");
+            perror("nocopy_echo()");
             break;
         }
-        memset(buf, 0, sizeof(buf));
+        if(!ret)
+            break;
     }
     close(targs->clifd);
+    close(pipefd[0]);
+    close(pipefd[1]);
     free(args);
     return NULL;
 }
@@ -56,9 +79,8 @@ int main(int argc, char** argv) {
     int ret = 0;
     int port = 8080;
     ThreadArgs *targs = NULL;
-    pid_t child_pid;
 
-    if(argv[1] == NULL) {
+    if(argv[1] == NULL || argc < 2) {
         usage(argv[0]);
     }
     port = atoi(argv[1]);
