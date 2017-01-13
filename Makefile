@@ -1,6 +1,6 @@
 P=8080
 
-all: server.c
+server: server.c
 	- gcc -lpthread -g -o server server.c
 
 run: server
@@ -10,4 +10,6 @@ clean:
 	- rm -rf server
 
 .PHONY = all clean
+
+.DEFAULT = server
 

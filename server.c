@@ -12,63 +12,21 @@
 #include<pthread.h>
 #include<arpa/inet.h>
 #include<sys/socket.h>
+#include<sys/select.h>
 #include<string.h>
 #include<sys/errno.h>
 
 #define MAX_BUF_SIZE 1000
-
-typedef struct thread_args {
-    int clifd;
-} ThreadArgs;
-
 
 void usage(char *proc_name) {
     printf("%s [port]\n", proc_name);
     exit(1);
 }
 
-int nocopy_echo(int connfd, int pipe_rd, int pipe_wr) {
-    ssize_t sz;
-    sz = splice(connfd, NULL, pipe_wr, NULL, MAX_BUF_SIZE, SPLICE_F_MORE);
-    if(sz < 0) {
-        perror("splice() read in");
-        return sz;
-    }
-    sz = splice(pipe_rd, NULL, connfd, NULL, MAX_BUF_SIZE, SPLICE_F_MORE);
-    if(sz < 0) {
-        perror("splice() write out");
-        return sz;
-    }
-    return 0;
-}
-
-// Handle connections per thread
-void *handle_conn(void *args) {
-    // Here we use an advanced no-copy IO to echo back the data
-    ThreadArgs *targs = (ThreadArgs *)args;
-    //printf("fd = %d\n", targs->clifd);
-    //printf("args = %x\n", args);
-    int ret = 0;
-    int pipefd[2];
-    ret = pipe(pipefd);
-    if(ret < 0) {
-        perror("pipe()");
-        return NULL;
-    }
-    while(1) {
-        ret = nocopy_echo(targs->clifd, pipefd[0], pipefd[1]);
-        if(ret < 0) {
-            perror("nocopy_echo()");
-            break;
-        }
-        if(!ret)
-            break;
-    }
-    close(targs->clifd);
-    close(pipefd[0]);
-    close(pipefd[1]);
-    free(args);
-    return NULL;
+void setnonblock(int fd) {
+    int old_flag = fcntl(fd, F_GETFL);
+    fcntl(fd, F_SETFL, old_flag | O_NONBLOCK);
+    return ;
 }
 
 int main(int argc, char** argv) {
@@ -76,9 +34,9 @@ int main(int argc, char** argv) {
 
     //sockaddr_in is used to describe internet(IPV4) socket address
     struct sockaddr_in server_in_addr;
+    char buf[MAX_BUF_SIZE];
     int ret = 0;
     int port = 8080;
-    ThreadArgs *targs = NULL;
 
     if(argv[1] == NULL || argc < 2) {
         usage(argv[0]);
@@ -113,6 +71,12 @@ int main(int argc, char** argv) {
         exit(-1);
     } 
 
+    //Make the socket resusable
+    int enable = 1;
+    ret = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, (size_t)sizeof(int));    
+    if(ret < 0) {
+        perror("setsockopt()");
+    }
     //Let socket bind to the server address and port
     ret = bind(sockfd, (const struct sockaddr *)&server_in_addr, sizeof(struct sockaddr_in));
     if(ret < 0) {
@@ -127,29 +91,59 @@ int main(int argc, char** argv) {
         exit(-1);
     }
     // Initialize thread_list variable
-    int thread_cnt = 0;
-    pthread_t *thread_list = NULL;
+    fd_set execption_fd, read_fd, write_fd;
+    FD_ZERO(&read_fd);
+    FD_ZERO(&execption_fd);
+    FD_ZERO(&write_fd);
+    // Reuse the socket ASAP
+
+    // Don't know why set this will make select continuosly return 0
+    // Now set &tval = NULL See select() below
+    struct timeval tval;
+    tval.tv_sec = 10;
+    tval.tv_usec = 0;
+    int tot = 0;
     while(1) {
-        //accept will block until a client connect to the server
-        //Use pthread_create to create thread for handling connections
         clifd = accept(sockfd, NULL, NULL);
         if (clifd < 0) {
             perror("accept()");
             exit(-1);
         }
-        printf("Create thread with fd = %d\n", clifd);
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        thread_cnt++;
-        targs = (ThreadArgs *)malloc(sizeof(ThreadArgs));
-        targs->clifd = clifd;
-        thread_list = (pthread_t *)realloc((void *)thread_list, thread_cnt * sizeof(pthread_t));
-        ret = pthread_create(&thread_list[thread_cnt - 1], &attr, handle_conn, (void *)targs);
+
+        FD_SET(clifd, &read_fd);
+        FD_SET(clifd, &execption_fd);
+        ret = select(clifd + 1, &read_fd, NULL, &execption_fd, NULL);
         if(ret < 0) {
-            perror("pthread_create()");
+            perror("select()");
             exit(-1);
         }
+        if(!ret) {
+            fprintf(stderr, "data timeout\n");
+        }
+        if(ret > 0) {
+            tot++;
+            if(FD_ISSET(clifd, &read_fd)) {
+                // Data available
+                memset(buf, 0, sizeof(buf));
+                while((ret = recv(clifd, buf, MAX_BUF_SIZE, 0)) && ret != EOF) {
+                    if(ret < 0) {
+                        perror("read()");
+                        break;
+                    }
+                    ret = send(clifd, buf, MAX_BUF_SIZE, 0);
+                    if(ret == EOF) {
+                        break;
+                    }
+                    if(ret < 0) {
+                        perror("write()");
+                        break;
+                    }
+                }
+            }
+        }
+        close(clifd);
     }
+    close(sockfd);
     return 0;
 }
 
