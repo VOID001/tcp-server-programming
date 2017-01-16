@@ -6,6 +6,7 @@
  ************************************************************************/
 #define _GNU_SOURCE
 #include<stdio.h>
+#include<signal.h>
 #include<stdlib.h>
 #include<unistd.h>
 #include<fcntl.h>
@@ -37,6 +38,9 @@ int main(int argc, char** argv) {
     char buf[MAX_BUF_SIZE];
     int ret = 0;
     int port = 8080;
+
+    //Ignore the SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
 
     if(argv[1] == NULL || argc < 2) {
         usage(argv[0]);
@@ -125,22 +129,23 @@ int main(int argc, char** argv) {
             if(FD_ISSET(clifd, &read_fd)) {
                 // Data available
                 memset(buf, 0, sizeof(buf));
-                while((ret = recv(clifd, buf, MAX_BUF_SIZE, 0)) && ret != EOF) {
+                while((ret = recv(clifd, buf, MAX_BUF_SIZE, 0)) && ret != 0) {
                     if(ret < 0) {
-                        perror("read()");
+                        perror("recv()");
                         break;
                     }
                     ret = send(clifd, buf, MAX_BUF_SIZE, 0);
-                    if(ret == EOF) {
+                    if(ret == 0) {
                         break;
                     }
                     if(ret < 0) {
-                        perror("write()");
+                        perror("send()");
                         break;
                     }
                 }
             }
         }
+        ret = shutdown(clifd, SHUT_RDWR);
         close(clifd);
     }
     close(sockfd);
